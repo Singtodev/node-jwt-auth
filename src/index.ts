@@ -19,7 +19,6 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(limiter);
 app.use(cookieParser());
-
 app.use(
   session({
     name: "app-name",
@@ -29,14 +28,11 @@ app.use(
     saveUninitialized: false,
   })
 );
-
 app.get("/", (req: Request, res: Response) => {
   res.send("Hello World : [ app-name-api ]");
 });
-
 app.use("/api/auth", authRouter);
 app.use("/api/users", authMiddleware, userRouter);
-
 app.listen(port, () => {
   console.log(`[server]: Server is running at http://localhost:${port}`);
   console.log(`Environment: ${process.env.NODE_ENV}`);

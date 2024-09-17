@@ -14,7 +14,6 @@ const router: Router = express.Router();
 const secret = process.env.JWT_SECRET || "Enigma";
 const jwtExpire = process.env.JWT_EXPIRE || "1h";
 const refreshTokenExpire = process.env.JWT_REFRESH_EXPIRE || "7d";
-
 // POST /register - ลงทะเบียนผู้ใช้ใหม่
 router.post(
   "/register",
@@ -47,11 +46,13 @@ router.post(
       );
 
       const userId = result.lastID;
-      const token = jwt.sign({ id: userId, ...userData }, secret, {
-        expiresIn: jwtExpire,
-      });
+      
       const refreshToken = jwt.sign({ id: userId }, secret, {
         expiresIn: refreshTokenExpire,
+      });
+
+      const token = jwt.sign({ id: userId, ...userData, refresh_token: refreshToken }, secret, {
+        expiresIn: jwtExpire,
       });
 
       await run(
@@ -68,7 +69,7 @@ router.post(
         message: "ลงทะเบียนสำเร็จ",
         data: { ...userData, id: userId },
         token,
-        refreshToken,
+        refresh_token: refreshToken,
       });
     } catch (error) {
       console.error("เกิดข้อผิดพลาดระหว่างการลงทะเบียน:", error);
@@ -112,11 +113,10 @@ router.post(
         last_name: user.last_name,
         role: user.role,
       };
-
-      const token = jwt.sign(userData, secret, { expiresIn: jwtExpire });
       const refreshToken = jwt.sign({ id: user.id }, secret, {
         expiresIn: refreshTokenExpire,
       });
+      const token = jwt.sign({...userData , refresh_token: refreshToken }, secret, { expiresIn: jwtExpire });
 
       // บันทึก refresh token ใหม่ในฐานข้อมูล
       await run(
@@ -133,7 +133,7 @@ router.post(
         message: "เข้าสู่ระบบสำเร็จ",
         data: userData,
         token,
-        refreshToken,
+        refresh_token: refreshToken,
       });
     } catch (error) {
       console.error("เกิดข้อผิดพลาดระหว่างการเข้าสู่ระบบ:", error);
@@ -144,12 +144,12 @@ router.post(
 
 // POST /refresh - รีเฟรชโทเค็น
 router.post("/refresh", async (req: Request, res: Response) => {
-  const { refreshToken } = req.body;
+  const { refresh_token } = req.body;
 
   try {
     // ตรวจสอบว่า refreshToken มีอยู่ในฐานข้อมูลและยังไม่หมดอายุ
     const tokens = await query("SELECT * FROM refresh_tokens WHERE token = ? AND expires_at > ? AND status = 'active'", [
-      refreshToken,
+      refresh_token,
       new Date().toISOString(),
     ]);
 
@@ -158,10 +158,10 @@ router.post("/refresh", async (req: Request, res: Response) => {
     }
 
     const userId = tokens[0].user_id;
-    const newToken = jwt.sign({ id: userId }, secret, { expiresIn: jwtExpire });
     const newRefreshToken = jwt.sign({ id: userId }, secret, {
       expiresIn: refreshTokenExpire,
     });
+    const newToken = jwt.sign({ id: userId , refresh_token: newRefreshToken }, secret, { expiresIn: jwtExpire });
 
     // อัพเดต refresh token ในฐานข้อมูล
     await run(
@@ -169,14 +169,14 @@ router.post("/refresh", async (req: Request, res: Response) => {
       [
         newRefreshToken,
         new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-        refreshToken,
+        refresh_token,
       ]
     );
 
     res.json({
       message: "รีเฟรชโทเค็นสำเร็จ",
       token: newToken,
-      refreshToken: newRefreshToken,
+      refresh_token: newRefreshToken,
     });
   } catch (error) {
     console.error("เกิดข้อผิดพลาดระหว่างการรีเฟรชโทเค็น:", error);
@@ -186,11 +186,11 @@ router.post("/refresh", async (req: Request, res: Response) => {
 
 // POST /revoke - เพิกถอน refreshToken
 router.post("/revoke", async (req: Request, res: Response) => {
-  const { refreshToken } = req.body;
+  const { refresh_token } = req.body;
 
   try {
     // เพิกถอน refresh token
-    const result = await run("UPDATE refresh_tokens SET status = 'revoked' WHERE token = ?", [refreshToken]);
+    const result = await run("UPDATE refresh_tokens SET status = 'revoked' WHERE token = ?", [refresh_token]);
 
     if (result.changes === 0) {
       return res.status(404).json({ message: "Refresh token ไม่พบ" });
@@ -205,12 +205,12 @@ router.post("/revoke", async (req: Request, res: Response) => {
 
 // POST /logout - ออกจากระบบ
 router.post("/logout", async (req: Request, res: Response) => {
-  const { refreshToken } = req.body;
+  const { refresh_token } = req.body;
 
   try {
     // ตรวจสอบว่า refreshToken มีอยู่ในฐานข้อมูลและยังไม่หมดอายุ
     const tokens = await query("SELECT * FROM refresh_tokens WHERE token = ? AND status = 'active'", [
-      refreshToken,
+      refresh_token,
     ]);
 
     if (tokens.length === 0) {
@@ -218,7 +218,7 @@ router.post("/logout", async (req: Request, res: Response) => {
     }
 
     // เพิกถอน refresh token
-    await run("UPDATE refresh_tokens SET status = 'revoked' WHERE token = ?", [refreshToken]);
+    await run("UPDATE refresh_tokens SET status = 'revoked' WHERE token = ?", [refresh_token]);
 
     res.json({ message: "ออกจากระบบสำเร็จ" });
   } catch (error) {

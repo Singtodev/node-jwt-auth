@@ -15,15 +15,16 @@ const db = new sqlite3.Database("./database.db", (err) => {
         password TEXT NOT NULL,
         role INT DEFAULT 1
       )`);
-      
+
       // Create refresh_tokens table
       db.run(`CREATE TABLE IF NOT EXISTS refresh_tokens (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              user_id INTEGER NOT NULL,
-              token TEXT UNIQUE NOT NULL,
-              expires_at DATETIME NOT NULL,
-              FOREIGN KEY (user_id) REFERENCES users(id)
-            )`);
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        token TEXT UNIQUE NOT NULL,
+        expires_at DATETIME NOT NULL,
+        status TEXT DEFAULT 'active', -- 'active', 'revoked'
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );`);
     });
 
     console.log("Connected to the SQLite database.");

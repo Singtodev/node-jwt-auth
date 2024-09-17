@@ -55,11 +55,12 @@ router.post(
       });
 
       await run(
-        "INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)",
+        "INSERT INTO refresh_tokens (user_id, token, expires_at, status) VALUES (?, ?, ?, ?)",
         [
           userId,
           refreshToken,
           new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          'active',
         ]
       );
 
@@ -88,7 +89,7 @@ router.post(
       const users = await query("SELECT * FROM users WHERE email = ?", [email]);
 
       if (users.length === 0) {
-        return res.status(401).json({ message: "ข้อมูลรับรองไม่ถูกต้อง" });
+        return res.status(401).json({ message: "อีเมลล์หรือรหัสผ่านไม่ถูกต้อง" });
       }
 
       const user: DbUser = users[0];
@@ -100,6 +101,10 @@ router.post(
         return res.status(401).json({ message: "ข้อมูลรับรองไม่ถูกต้อง" });
       }
 
+      // ทำลาย refresh token เดิม
+      await run("UPDATE refresh_tokens SET status = 'revoked' WHERE user_id = ? AND status = 'active'", [user.id]);
+
+      // สร้าง token ใหม่
       const userData = {
         id: user.id,
         email: user.email,
@@ -113,13 +118,14 @@ router.post(
         expiresIn: refreshTokenExpire,
       });
 
-      // บันทึก refreshToken ในฐานข้อมูล
+      // บันทึก refresh token ใหม่ในฐานข้อมูล
       await run(
-        "INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)",
+        "INSERT INTO refresh_tokens (user_id, token, expires_at, status) VALUES (?, ?, ?, ?)",
         [
           user.id,
           refreshToken,
           new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          'active',
         ]
       );
 
@@ -142,14 +148,13 @@ router.post("/refresh", async (req: Request, res: Response) => {
 
   try {
     // ตรวจสอบว่า refreshToken มีอยู่ในฐานข้อมูลและยังไม่หมดอายุ
-    const tokens = await query("SELECT * FROM refresh_tokens WHERE token = ?", [
+    const tokens = await query("SELECT * FROM refresh_tokens WHERE token = ? AND expires_at > ? AND status = 'active'", [
       refreshToken,
+      new Date().toISOString(),
     ]);
 
-    if (tokens.length === 0 || new Date(tokens[0].expires_at) < new Date()) {
-      return res
-        .status(401)
-        .json({ message: "Refresh token ไม่ถูกต้องหรือหมดอายุ" });
+    if (tokens.length === 0) {
+      return res.status(401).json({ message: "Refresh token ไม่ถูกต้องหรือหมดอายุ" });
     }
 
     const userId = tokens[0].user_id;
@@ -184,11 +189,41 @@ router.post("/revoke", async (req: Request, res: Response) => {
   const { refreshToken } = req.body;
 
   try {
-    await run("DELETE FROM refresh_tokens WHERE token = ?", [refreshToken]);
+    // เพิกถอน refresh token
+    const result = await run("UPDATE refresh_tokens SET status = 'revoked' WHERE token = ?", [refreshToken]);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ message: "Refresh token ไม่พบ" });
+    }
+
     res.json({ message: "เพิกถอน refresh token สำเร็จ" });
   } catch (error) {
     console.error("เกิดข้อผิดพลาดระหว่างการเพิกถอนโทเค็น:", error);
     res.status(500).json({ message: "เกิดข้อผิดพลาดระหว่างการเพิกถอนโทเค็น" });
+  }
+});
+
+// POST /logout - ออกจากระบบ
+router.post("/logout", async (req: Request, res: Response) => {
+  const { refreshToken } = req.body;
+
+  try {
+    // ตรวจสอบว่า refreshToken มีอยู่ในฐานข้อมูลและยังไม่หมดอายุ
+    const tokens = await query("SELECT * FROM refresh_tokens WHERE token = ? AND status = 'active'", [
+      refreshToken,
+    ]);
+
+    if (tokens.length === 0) {
+      return res.status(404).json({ message: "Refresh token ไม่พบหรือไม่ใช่ active" });
+    }
+
+    // เพิกถอน refresh token
+    await run("UPDATE refresh_tokens SET status = 'revoked' WHERE token = ?", [refreshToken]);
+
+    res.json({ message: "ออกจากระบบสำเร็จ" });
+  } catch (error) {
+    console.error("เกิดข้อผิดพลาดระหว่างการออกจากระบบ:", error);
+    res.status(500).json({ message: "เกิดข้อผิดพลาดระหว่างการออกจากระบบ" });
   }
 });
 
